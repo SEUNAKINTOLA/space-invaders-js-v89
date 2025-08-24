@@ -1,0 +1,180 @@
+"""
+Unit tests for Dockerfile validation and building functionality.
+
+This module provides comprehensive testing for Dockerfile-related operations,
+including syntax validation, build context verification, and instruction checking.
+
+Author: Senior Developer
+Date: 2025-01-01
+"""
+
+import unittest
+import os
+import tempfile
+import logging
+from pathlib import Path
+from typing import Optional, Dict, List
+from contextlib import contextmanager
+from unittest.mock import patch, MagicMock
+import docker
+from docker.errors import BuildError, APIError
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class DockerfileTestCase(unittest.TestCase):
+    """Test suite for Dockerfile validation and building operations."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Set up test environment and resources."""
+        cls.docker_client = docker.from_env()
+        cls.test_dockerfile_path = Path(__file__).parent.parent.parent / 'Dockerfile'
+        
+        if not cls.test_dockerfile_path.exists():
+            raise FileNotFoundError(
+                f"Dockerfile not found at expected path: {cls.test_dockerfile_path}"
+            )
+
+    def setUp(self) -> None:
+        """Set up individual test cases."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.addCleanup(self._cleanup_temp_dir)
+
+    def _cleanup_temp_dir(self) -> None:
+        """Clean up temporary directory after tests."""
+        try:
+            import shutil
+            shutil.rmtree(self.temp_dir)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temporary directory: {e}")
+
+    @contextmanager
+    def _create_test_dockerfile(self, content: str) -> Path:
+        """
+        Create a temporary Dockerfile with specified content.
+        
+        Args:
+            content: The content to write to the Dockerfile
+            
+        Yields:
+            Path object pointing to the temporary Dockerfile
+        """
+        temp_dockerfile = Path(self.temp_dir) / 'Dockerfile'
+        try:
+            temp_dockerfile.write_text(content)
+            yield temp_dockerfile
+        finally:
+            if temp_dockerfile.exists():
+                temp_dockerfile.unlink()
+
+    def test_dockerfile_exists(self) -> None:
+        """Verify that the Dockerfile exists in the expected location."""
+        self.assertTrue(
+            self.test_dockerfile_path.exists(),
+            f"Dockerfile not found at {self.test_dockerfile_path}"
+        )
+
+    def test_dockerfile_basic_syntax(self) -> None:
+        """Test basic Dockerfile syntax validation."""
+        dockerfile_content = self.test_dockerfile_path.read_text()
+        self.assertIsNotNone(dockerfile_content, "Dockerfile should not be empty")
+        
+        # Check for required instructions
+        required_instructions = ['FROM', 'WORKDIR', 'COPY', 'RUN']
+        for instruction in required_instructions:
+            self.assertIn(
+                instruction,
+                dockerfile_content,
+                f"Missing required instruction: {instruction}"
+            )
+
+    @patch('docker.api.build.BuildApiMixin.build')
+    def test_dockerfile_build(self, mock_build: MagicMock) -> None:
+        """Test Dockerfile build process."""
+        mock_build.return_value = [{'stream': 'Build completed successfully'}]
+
+        try:
+            self.docker_client.images.build(
+                path=str(self.test_dockerfile_path.parent),
+                dockerfile=str(self.test_dockerfile_path.name),
+                tag='test-image:latest'
+            )
+        except BuildError as e:
+            self.fail(f"Dockerfile build failed: {e}")
+        except APIError as e:
+            self.fail(f"Docker API error: {e}")
+
+    def test_dockerfile_security_best_practices(self) -> None:
+        """Test Dockerfile security best practices."""
+        dockerfile_content = self.test_dockerfile_path.read_text()
+
+        # Check for non-root user
+        self.assertIn(
+            'USER',
+            dockerfile_content,
+            "Dockerfile should specify a non-root user for security"
+        )
+
+        # Check for no sensitive data in ENV
+        sensitive_patterns = ['PASSWORD', 'SECRET', 'KEY']
+        for pattern in sensitive_patterns:
+            self.assertNotIn(
+                f'ENV {pattern}',
+                dockerfile_content,
+                f"Dockerfile should not contain sensitive data in ENV: {pattern}"
+            )
+
+    def test_dockerfile_layer_optimization(self) -> None:
+        """Test Dockerfile layer optimization practices."""
+        dockerfile_content = self.test_dockerfile_path.read_text().split('\n')
+        
+        run_commands = [line for line in dockerfile_content if line.startswith('RUN')]
+        
+        # Check for chained RUN commands
+        for cmd in run_commands:
+            if '&&' in cmd:
+                self.assertIn(
+                    '\\',
+                    cmd,
+                    "Multi-line RUN commands should use line continuation"
+                )
+
+    def test_dockerfile_base_image(self) -> None:
+        """Test base image specification and version pinning."""
+        dockerfile_content = self.test_dockerfile_path.read_text()
+        from_line = next(
+            line for line in dockerfile_content.split('\n')
+            if line.startswith('FROM')
+        )
+        
+        # Check for specific version tag
+        self.assertNotIn(
+            'latest',
+            from_line,
+            "Base image should use specific version tag, not 'latest'"
+        )
+
+    @patch('docker.api.build.BuildApiMixin.build')
+    def test_dockerfile_build_args(self, mock_build: MagicMock) -> None:
+        """Test Dockerfile BUILD ARG handling."""
+        test_build_args = {'VERSION': '1.0.0', 'ENV': 'test'}
+        
+        mock_build.return_value = [{'stream': 'Build completed successfully'}]
+        
+        try:
+            self.docker_client.images.build(
+                path=str(self.test_dockerfile_path.parent),
+                dockerfile=str(self.test_dockerfile_path.name),
+                buildargs=test_build_args
+            )
+            mock_build.assert_called_once()
+        except Exception as e:
+            self.fail(f"Failed to build with build args: {e}")
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

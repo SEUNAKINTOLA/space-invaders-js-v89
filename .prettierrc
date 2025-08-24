@@ -1,0 +1,36 @@
+{
+  "printWidth": 88,
+  "tabWidth": 4,
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "bracketSpacing": true,
+  "arrowParens": "always",
+  "endOfLine": "lf",
+  "overrides": [
+    {
+      "files": "*.py",
+      "options": {
+        "parser": "python",
+        "plugins": ["prettier-plugin-python"],
+        "tabWidth": 4,
+        "printWidth": 88,
+        "semi": false,
+        "singleQuote": true
+      }
+    },
+    {
+      "files": ["*.json", "*.yml", "*.yaml"],
+      "options": {
+        "tabWidth": 2
+      }
+    },
+    {
+      "files": ["*.md"],
+      "options": {
+        "tabWidth": 2,
+        "proseWrap": "always"
+      }
+    }
+  ]
+}
